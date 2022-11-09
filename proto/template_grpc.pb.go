@@ -31,7 +31,7 @@ func NewVoteClient(cc grpc.ClientConnInterface) VoteClient {
 
 func (c *voteClient) Ping(ctx context.Context, in *Request, opts ...grpc.CallOption) (*Response, error) {
 	out := new(Response)
-	err := c.cc.Invoke(ctx, "/grpc.Vote/ping", in, out, opts...)
+	err := c.cc.Invoke(ctx, "/peer.Vote/ping", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -76,7 +76,7 @@ func _Vote_Ping_Handler(srv interface{}, ctx context.Context, dec func(interface
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: "/grpc.Vote/ping",
+		FullMethod: "/peer.Vote/ping",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(VoteServer).Ping(ctx, req.(*Request))
@@ -88,7 +88,7 @@ func _Vote_Ping_Handler(srv interface{}, ctx context.Context, dec func(interface
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
 var Vote_ServiceDesc = grpc.ServiceDesc{
-	ServiceName: "grpc.Vote",
+	ServiceName: "peer.Vote",
 	HandlerType: (*VoteServer)(nil),
 	Methods: []grpc.MethodDesc{
 		{

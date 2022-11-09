@@ -4,13 +4,19 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	peer "github.com/AGmarsen/Handin-4/proto"
+	"google.golang.org/grpc"
 	"log"
 	"net"
 	"os"
 	"strconv"
-	grpc "github.com/AGmarsen/Handin-4/proto"
-	"google.golang.org/grpc"
+	"sync"
 )
+
+// states
+const WANTED int = 0
+const HELD int = 1
+const RELEASED int = 2
 
 func main() {
 	arg1, _ := strconv.ParseInt(os.Args[1], 10, 32)
@@ -20,10 +26,11 @@ func main() {
 	defer cancel()
 
 	p := &peer{
-		id:            ownPort,
-		amountOfPings: make(map[int32]int32),
-		clients:       make(map[int32]ping.PingClient),
-		ctx:           ctx,
+		id:      ownPort,
+		clock:   0,
+		state:   RELEASED,
+		clients: make(map[int32]peer.VoteClient),
+		ctx:     ctx,
 	}
 
 	// Create listener tcp on port ownPort
@@ -31,11 +38,11 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to listen on port: %v", err)
 	}
-	grpcServer := grpc.NewServer()
-	ping.RegisterPingServer(grpcServer, p)
+	peerServer := peer.NewServer()
+	peer.RegisterVoteServer(peerServer, p)
 
 	go func() {
-		if err := grpcServer.Serve(list); err != nil {
+		if err := peerServer.Serve(list); err != nil {
 			log.Fatalf("failed to server %v", err)
 		}
 	}()
@@ -47,46 +54,108 @@ func main() {
 			continue
 		}
 
-		var conn *grpc.ClientConn
+		var conn *peer.ClientConn
 		fmt.Printf("Trying to dial: %v\n", port)
-		conn, err := grpc.Dial(fmt.Sprintf(":%v", port), grpc.WithInsecure(), grpc.WithBlock())
+		conn, err := peer.Dial(fmt.Sprintf(":%v", port), peer.WithInsecure(), peer.WithBlock())
 		if err != nil {
 			log.Fatalf("Could not connect: %s", err)
 		}
 		defer conn.Close()
-		c := ping.NewPingClient(conn)
+		c := peer.NewVoteClient(conn)
 		p.clients[port] = c
 	}
 
 	scanner := bufio.NewScanner(os.Stdin)
 	for scanner.Scan() {
-		p.sendPingToAll()
+		p.enter()
 	}
 }
 
 type peer struct {
-	ping.UnimplementedPingServer
-	id            int32
-	amountOfPings map[int32]int32
-	clients       map[int32]ping.PingClient
-	ctx           context.Context
+	peer.UnimplementedVoteServer
+	id      int32
+	clock   int32
+	state   int
+	clients map[int32]peer.VoteClient
+	ctx     context.Context
+	mutex   sync.Mutex
 }
 
-func (p *peer) Ping(ctx context.Context, req *ping.Request) (*ping.Reply, error) {
-	id := req.Id
-	p.amountOfPings[id] += 1
-
-	rep := &ping.Reply{Amount: p.amountOfPings[id]}
-	return rep, nil
-}
-
-func (p *peer) sendPingToAll() {
-	request := &ping.Request{Id: p.id}
-	for id, client := range p.clients {
-		reply, err := client.Ping(p.ctx, request)
-		if err != nil {
-			fmt.Println("something went wrong")
-		}
-		fmt.Printf("Got reply from id %v: %v\n", id, reply.Amount)
+func (p *peer) Request(ctx context.Context, req *peer.Request) (*peer.Response, error) {
+	updateLamport(req)
+	log.Printf("Request received from %d (%d, %d)\n", req.id, p.id, p.clock)
+	var resp peer.Response
+	for p.state == HELD {
+		//don't respond while in critical state
 	}
+	if p.state == RELEASED {
+		resp = &peer.Response{id: p.id, p.clock}
+		updateLamport(resp)
+		resp = &peer.Response{id: p.id, p.clock}
+		return resp, nil
+	}
+	//if wanted and request has higher priority
+	if p.clock > req.clock || p.clock == req.clock && p.id > req.id {
+		resp = &peer.Response{id: p.id, p.clock}
+		updateLamport(resp)
+		resp = &peer.Response{id: p.id, p.clock}
+		return resp, nil
+	}
+	//else if I have higher priority
+	for state != RELEASED {
+		//don't respond until I'm are done
+	}
+	resp = &peer.Response{id: p.id, p.clock}
+	updateLamport(resp)
+	resp = &peer.Response{id: p.id, p.clock}
+	return resp, nil
+}
+
+// try to enter critical state
+func (p *peer) enter() {
+	p.state = WANTED
+	request := &peer.Request{id, clock}
+
+	for id, client := range p.clients {
+		updateLamport(request)
+		log.Printf("Request sent to: %d (%d, %d)\n", id, p.id, p.clock)
+		reply, err := client.Request(request)
+		if err != nil {
+			log.Printf(err)
+		}
+		updateLamport(reply)
+		log.Printf("Reply recieved from %d (%d, %d)\n", reply.id, p.id, p.clock)
+	}
+	//after response from two peers
+	p.state = HELD
+
+	//Enter :-)
+	doCriticalStuff()
+
+	//Release Critical
+	p.state = RELEASED
+
+}
+
+func doCriticalStuff() {
+	log.Printf("I got permission :D")
+}
+
+func (p *Peer) updateLamport(req *peer.Request) {
+	p.mutex.lock()
+	defer p.mutex.unlock()
+	req.clock = max(p.clock, req.clock) + 1
+}
+
+func (p *Peer) updateLamport(resp *peer.Response) {
+	p.mutex.lock()
+	defer p.mutex.unlock()
+	req.clock = max(p.clock, resp.clock) + 1
+}
+
+func max(a int32, b int32) {
+	if a > b {
+		return a
+	}
+	return b
 }
