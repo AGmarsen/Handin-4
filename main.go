@@ -4,13 +4,15 @@ import (
 	"bufio"
 	"context"
 	"fmt"
-	voter "github.com/AGmarsen/Handin-4/proto"
-	"google.golang.org/grpc"
 	"log"
 	"net"
 	"os"
 	"strconv"
 	"sync"
+	"time"
+
+	voter "github.com/AGmarsen/Handin-4/proto"
+	"google.golang.org/grpc"
 )
 
 // states
@@ -26,11 +28,12 @@ func main() {
 	defer cancel()
 
 	p := &peer{
-		id:      ownPort,
-		clock:   0,
-		state:   RELEASED,
-		clients: make(map[int32]voter.VoteClient),
-		ctx:     ctx,
+		id:       ownPort,
+		clock:    0,
+		reqClock: 0,
+		state:    RELEASED,
+		clients:  make(map[int32]voter.VoteClient),
+		ctx:      ctx,
 	}
 
 	// Create listener tcp on port ownPort
@@ -67,18 +70,22 @@ func main() {
 
 	scanner := bufio.NewScanner(os.Stdin)
 	for scanner.Scan() { //press enter to request critical state
-		p.enter()
+		if p.state == RELEASED {
+			p.enter()
+		}
+		time.Sleep(3000 * time.Millisecond)
 	}
 }
 
 type peer struct {
 	voter.UnimplementedVoteServer
-	id      int32
-	clock   int32
-	state   int
-	clients map[int32]voter.VoteClient
-	ctx     context.Context
-	mutex   sync.Mutex
+	id       int32
+	clock    int32
+	reqClock int32
+	state    int
+	clients  map[int32]voter.VoteClient
+	ctx      context.Context
+	mutex    sync.Mutex
 }
 
 func (p *peer) Vote(ctx context.Context, req *voter.Request) (*voter.Response, error) {
@@ -90,7 +97,7 @@ func (p *peer) Vote(ctx context.Context, req *voter.Request) (*voter.Response, e
 		}
 	}
 	//if i dont want it or we both want it but they have a better Lamport (better = lower)
-	if p.state == RELEASED || (p.clock > req.Clock || p.clock == req.Clock && p.id > req.Id){
+	if p.state == RELEASED || (p.reqClock > req.Clock || p.reqClock == req.Clock && p.id > req.Id) {
 		resp := &voter.Response{Id: p.id, Clock: p.clock}
 		p.updateLamportResp(resp)
 		resp = &voter.Response{Id: p.id, Clock: p.clock}
@@ -98,7 +105,7 @@ func (p *peer) Vote(ctx context.Context, req *voter.Request) (*voter.Response, e
 		return resp, nil
 	}
 	//else if I have higher priority
-	for  {
+	for {
 		if p.state == RELEASED { //don't respond until I'm done
 			break
 		}
@@ -114,9 +121,11 @@ func (p *peer) Vote(ctx context.Context, req *voter.Request) (*voter.Response, e
 func (p *peer) enter() {
 	p.state = WANTED
 	request := &voter.Request{Id: p.id, Clock: p.clock}
+	p.updateLamportReq(request) //send the same clock to all peers
+	request = &voter.Request{Id: p.id, Clock: p.clock}
+	p.reqClock = p.clock
 
 	for id, client := range p.clients {
-		p.updateLamportReq(request)
 		log.Printf("Request sent to: %d L(%d, %d)\n", id, p.id, p.clock)
 		reply, err := client.Vote(p.ctx, request)
 		if err != nil {
@@ -137,6 +146,8 @@ func (p *peer) enter() {
 
 func doCriticalStuff() {
 	log.Printf("Critical: I got permission :D")
+	time.Sleep(1000 * time.Millisecond)
+	log.Printf("Done with critical")
 }
 
 func (p *peer) updateLamportReq(req *voter.Request) {
